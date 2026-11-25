@@ -1,4 +1,5 @@
 import prisma from '../config/prisma';
+import { multiSourceManager } from '../cluster/multi-source.manager';
 
 export class ProductService {
   static async getAllProducts(query: { search?: string; loaiHangId?: string; nhaCungCapId?: string }) {
@@ -103,7 +104,7 @@ export class ProductService {
       throw new Error(`Mã hàng hóa "${data.maHH}" đã tồn tại trên hệ thống`);
     }
 
-    return prisma.hangHoa.create({
+    const created = await prisma.hangHoa.create({
       data: {
         maHH: data.maHH,
         tenHH: data.tenHH,
@@ -121,6 +122,11 @@ export class ProductService {
         nhaCungCap: true,
       },
     });
+
+    // Phát tán ghi Master Data sang Đa Nguồn (North, South, Replica) đồng thời
+    multiSourceManager.broadcastMasterData('PRODUCT', created).catch(() => {});
+
+    return created;
   }
 
   static async updateProduct(id: string, data: any) {

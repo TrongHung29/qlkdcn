@@ -9,7 +9,8 @@ import {
   Bell,
   ClipboardList,
   ChevronLeft,
-  Users
+  Users,
+  Database
 } from 'lucide-react';
 import { Role } from '../types';
 
@@ -33,6 +34,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'dispatches', label: 'Phiếu Xuất kho', icon: ArrowUpRight },
     { id: 'transfers', label: 'Phiếu Chuyển Vị Trí', icon: ArrowLeftRight },
     { id: 'inventory', label: 'Tra cứu & Sơ đồ Vị trí', icon: Warehouse },
+    { id: 'cluster', label: 'Cụm DB Dự Phòng (HA)', icon: Database },
     { id: 'alerts', label: 'Cảnh báo Tồn kho', icon: Bell, badge: alertCount },
     { id: 'audits', label: 'Nhật ký Thao tác', icon: ClipboardList, roles: ['ADMIN', 'QUAN_LY_KHO'] },
     { id: 'users', label: 'Quản lý Nhân sự', icon: Users, roles: ['ADMIN'] },

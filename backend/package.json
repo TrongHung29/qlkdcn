@@ -11,30 +11,46 @@
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:seed": "ts-node prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:migrate:distributed": "ts-node scripts/migrate-distributed.ts",
+    "db:seed:distributed": "ts-node scripts/seed-distributed.ts",
+    "db:seed:warehouse-scope": "ts-node scripts/seed-warehouse-scope.ts",
+    "workers": "ts-node src/distributed/workers/index.ts",
+    "test:distributed": "ts-node scripts/test-distributed.ts",
+    "test:broker": "ts-node scripts/test-broker.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
+    "amqplib": "^2.4.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
     "jsonwebtoken": "^9.0.2",
+    "pg": "^8.23.1",
+    "redis": "^4.7.0",
+    "uuidv7": "^1.2.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/amqplib": "^0.10.8",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^20.17.6",
+    "@types/pg": "^8.23.1",
     "nodemon": "^3.1.7",
     "prisma": "^5.22.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.6.3"
+  },
+  "allowScripts": {
+    "@prisma/client@5.22.0": true,
+    "@prisma/engines@5.22.0": true,
+    "prisma@5.22.0": true
   }
 }
-

@@ -9,8 +9,13 @@ backend/.env
 frontend/.env
 *.env.local
 
-# PostgreSQL data volume (Docker)
+# PostgreSQL / message broker data volumes (Docker)
 pgdata/
+pgdata-north/
+pgdata-south/
+pgdata-replica/
+rabbitmq-data/
+redis-data/
 backend/pgdata/
 
 # Build artifacts

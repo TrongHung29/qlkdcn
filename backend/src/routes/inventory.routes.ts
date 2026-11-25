@@ -23,11 +23,11 @@ router.post(
 // Xem nhật ký kiểm toán hệ thống
 router.get('/audits', authenticate, authorize([Role.ADMIN, Role.QUAN_LY_KHO]), InventoryController.getAuditLogs);
 
-// Điều chỉnh tồn kho thủ công (Manual stock adjustment)
+// Điều chỉnh tồn kho thủ công (Chỉ Quản lý kho và Admin được phép)
 router.post(
   '/adjust',
   authenticate,
-  authorize([Role.ADMIN, Role.QUAN_LY_KHO, Role.NHAN_VIEN_KHO]),
+  authorize([Role.ADMIN, Role.QUAN_LY_KHO]),
   InventoryController.adjustStock
 );
 

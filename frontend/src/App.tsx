@@ -13,7 +13,8 @@ import {
   Dispatch,
   CanhBao,
   DashboardStats,
-  NotificationItem
+  NotificationItem,
+  ClusterState
 } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -26,7 +27,9 @@ import { InventoryView } from './components/InventoryView';
 import { AlertsView } from './components/AlertsView';
 import { AuditsView } from './components/AuditsView';
 import { UsersView } from './components/UsersView';
+import { ClusterView } from './components/ClusterView';
 import { LoginModal } from './components/LoginModal';
+import { getWarehouseCode, setWarehouseCode } from './api/offline-queue';
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState('dashboard');
@@ -51,6 +54,19 @@ export const App: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [readNotifIds, setReadNotifIds] = useState<string[]>([]);
+  const [clusterState, setClusterState] = useState<ClusterState | null>(null);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('');
+
+  const fetchClusterStatus = async () => {
+    try {
+      const res = await api.get('/cluster/status');
+      if (res.data?.data) {
+        setClusterState(res.data.data);
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -124,6 +140,7 @@ export const App: React.FC = () => {
       if (transRes.data.data) setTransfers(transRes.data.data);
       if (alertRes.data.data) setAlerts(alertRes.data.data);
       if (notifRes.data.data) setNotifications(notifRes.data.data);
+      await fetchClusterStatus();
 
       if (currentUser?.role === 'ADMIN' || currentUser?.role === 'QUAN_LY_KHO') {
         const auditRes = await api.get('/inventory/audits').catch(() => ({ data: { data: [] } }));
@@ -157,6 +174,24 @@ export const App: React.FC = () => {
       fetchAllData();
     }
   }, [currentUser]);
+
+  // Warehouse Switcher: đồng bộ kho đang chọn xuống mọi request (header x-warehouse-code).
+  useEffect(() => {
+    if (!warehouses.length) return;
+    if (!getWarehouseCode()) {
+      const first = warehouses[0];
+      setSelectedWarehouseId(first.id);
+      setWarehouseCode(first.maKho);
+    }
+  }, [warehouses]);
+
+  const handleSelectWarehouse = (warehouseId: string) => {
+    setSelectedWarehouseId(warehouseId);
+    const selected = warehouses.find((warehouse) => warehouse.id === warehouseId);
+    setWarehouseCode(selected?.maKho || '');
+    showToast(selected ? `Đã chuyển sang ${selected.tenKho}` : 'Đang xem toàn bộ hệ thống kho');
+    void fetchAllData();
+  };
 
   const handleMarkAllNotificationsRead = (silent = false) => {
     if (!currentUser) return;
@@ -258,6 +293,12 @@ export const App: React.FC = () => {
     fetchAllData();
   };
 
+  const handleRejectTransfer = async (id: string, lyDo?: string) => {
+    await api.post(`/transfers/${id}/reject`, { lyDo });
+    showToast('Đã từ chối phiếu chuyển kho và giải phóng tồn khả dụng tại kho nguồn');
+    fetchAllData();
+  };
+
   // Alert actions
   const handleResolveAlert = async (id: string) => {
     await api.post(`/inventory/alerts/${id}/resolve`);
@@ -326,6 +367,11 @@ export const App: React.FC = () => {
           readNotificationIds={readNotifIds}
           onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
           onSelectNotification={handleSelectNotification}
+          isFailover={clusterState?.mode === 'SIMULATED_FAILOVER'}
+          onClusterClick={() => setCurrentTab('cluster')}
+          warehouses={warehouses}
+          selectedWarehouseId={selectedWarehouseId}
+          onSelectWarehouse={handleSelectWarehouse}
         />
 
         <main className="p-6 max-w-7xl mx-auto w-full flex-1">
@@ -387,6 +433,7 @@ export const App: React.FC = () => {
               locations={locations}
               onCreateTransfer={handleCreateTransfer}
               onApproveTransfer={handleApproveTransfer}
+              onRejectTransfer={handleRejectTransfer}
               canApprove={canApprove}
             />
           )}
@@ -397,6 +444,14 @@ export const App: React.FC = () => {
               locations={locations}
               inventory={inventory}
               onAdjustStock={handleAdjustStock}
+            />
+          )}
+
+          {currentTab === 'cluster' && (
+            <ClusterView
+              clusterState={clusterState}
+              onRefresh={fetchClusterStatus}
+              showToast={showToast}
             />
           )}
 

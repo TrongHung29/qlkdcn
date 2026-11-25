@@ -196,9 +196,9 @@ export class DispatchService {
         },
       });
 
-      // Tăng số lượng tạm giữ (soLuongTamGiu) và giảm tồn khả dụng (soLuongKhaDung)
+      // Tăng số lượng tạm giữ (soLuongTamGiu) và giảm tồn khả dụng (soLuongKhaDung) với kiểm tra an toàn trong Transaction
       for (const item of data.items) {
-        await tx.tonKho.update({
+        const stock = await tx.tonKho.findUnique({
           where: {
             khoId_hangHoaId_viTriId: {
               khoId: data.khoId,
@@ -206,9 +206,20 @@ export class DispatchService {
               viTriId: item.viTriId,
             },
           },
+          include: { hangHoa: true, viTri: true },
+        });
+
+        if (!stock || stock.soLuongKhaDung < item.slThucXuat) {
+          throw new Error(
+            `Không đủ tồn khả dụng cho mặt hàng "${stock?.hangHoa?.tenHH || 'Chưa rõ'}" tại vị trí ${stock?.viTri?.maViTri || 'Chưa rõ'} (Khả dụng: ${stock?.soLuongKhaDung || 0}, Cần giữ chỗ: ${item.slThucXuat})`
+          );
+        }
+
+        await tx.tonKho.update({
+          where: { id: stock.id },
           data: {
-            soLuongTamGiu: { increment: item.slThucXuat },
-            soLuongKhaDung: { decrement: item.slThucXuat },
+            soLuongTamGiu: stock.soLuongTamGiu + item.slThucXuat,
+            soLuongKhaDung: stock.soLuongKhaDung - item.slThucXuat,
           },
         });
       }
@@ -272,12 +283,17 @@ export class DispatchService {
           );
         }
 
-        // Trừ tồn kho thực tế và giải phóng số lượng tạm giữ
+        // Trừ tồn kho thực tế và giải phóng số lượng tạm giữ an toàn, bảo toàn invariant tồn kho
+        const newTon = stock.soLuongTon - item.slThucXuat;
+        const newTamGiu = Math.max(0, stock.soLuongTamGiu - item.slThucXuat);
+        const newKhaDung = Math.max(0, newTon - newTamGiu);
+
         const updatedStock = await tx.tonKho.update({
           where: { id: stock.id },
           data: {
-            soLuongTon: stock.soLuongTon - item.slThucXuat,
-            soLuongTamGiu: Math.max(0, stock.soLuongTamGiu - item.slThucXuat),
+            soLuongTon: newTon,
+            soLuongTamGiu: newTamGiu,
+            soLuongKhaDung: newKhaDung,
           },
         });
 
@@ -372,9 +388,9 @@ export class DispatchService {
     }
 
     const result = await prisma.$transaction(async (tx) => {
-      // Giải phóng số lượng tạm giữ trả về tồn khả dụng
+      // Giải phóng số lượng tạm giữ trả về tồn khả dụng một cách an toàn
       for (const item of dispatch.chiTiet) {
-        await tx.tonKho.update({
+        const stock = await tx.tonKho.findUnique({
           where: {
             khoId_hangHoaId_viTriId: {
               khoId: dispatch.khoId,
@@ -382,11 +398,18 @@ export class DispatchService {
               viTriId: item.viTriId,
             },
           },
-          data: {
-            soLuongTamGiu: { decrement: item.slThucXuat },
-            soLuongKhaDung: { increment: item.slThucXuat },
-          },
         });
+        if (stock) {
+          const newTamGiu = Math.max(0, stock.soLuongTamGiu - item.slThucXuat);
+          const newKhaDung = Math.min(stock.soLuongTon, stock.soLuongKhaDung + item.slThucXuat);
+          await tx.tonKho.update({
+            where: { id: stock.id },
+            data: {
+              soLuongTamGiu: newTamGiu,
+              soLuongKhaDung: newKhaDung,
+            },
+          });
+        }
       }
 
       const updated = await tx.phieuXuatKho.update({
@@ -413,6 +436,35 @@ export class DispatchService {
     });
 
     return result;
+  }
+
+  // 5. Tự động giải phóng các phiếu giữ chỗ quá hạn (Reservation Expiry TTL Sweep)
+  static async autoReleaseExpiredDispatches(maxAgeMinutes = 60) {
+    const cutoffDate = new Date(Date.now() - maxAgeMinutes * 60 * 1000);
+    const expiredList = await prisma.phieuXuatKho.findMany({
+      where: {
+        trangThai: TrangThaiPhieu.PENDING,
+        ngayTao: { lt: cutoffDate },
+      },
+      select: { id: true, maPX: true },
+    });
+
+    const released = [];
+    for (const exp of expiredList) {
+      try {
+        const adminUser = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
+        const actorId = adminUser?.id || exp.id;
+        const res = await this.rejectDispatch(
+          exp.id,
+          actorId,
+          `Tự động hủy do quá hạn giữ chỗ (${maxAgeMinutes} phút)`
+        );
+        released.push({ id: exp.id, maPX: exp.maPX });
+      } catch (err: any) {
+        console.error(`Không thể giải phóng phiếu quá hạn ${exp.maPX}:`, err.message);
+      }
+    }
+    return { count: released.length, released };
   }
 }
 

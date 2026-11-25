@@ -1,0 +1,31 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "1. Kho Miền Bắc (Primary Master - Port 5432)",
+      "Group": "WMS Distributed Cluster",
+      "Host": "postgres-north",
+      "Port": 5432,
+      "MaintenanceDB": "wms_db",
+      "Username": "postgres",
+      "SSLMode": "prefer"
+    },
+    "2": {
+      "Name": "2. Kho Miền Nam (Shard South - Port 5433)",
+      "Group": "WMS Distributed Cluster",
+      "Host": "postgres-south",
+      "Port": 5432,
+      "MaintenanceDB": "wms_db",
+      "Username": "postgres",
+      "SSLMode": "prefer"
+    },
+    "3": {
+      "Name": "3. Standby Replica (Dự Phòng - Port 5434)",
+      "Group": "WMS Distributed Cluster",
+      "Host": "postgres-replica",
+      "Port": 5432,
+      "MaintenanceDB": "wms_db",
+      "Username": "postgres",
+      "SSLMode": "prefer"
+    }
+  }
+}

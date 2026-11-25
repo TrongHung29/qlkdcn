@@ -1,11 +1,46 @@
 import prisma from '../config/prisma';
 import * as bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
-import { UserStatus } from '@prisma/client';
+import { Prisma, Role, UserStatus } from '@prisma/client';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_wms_team8_2026';
 
 export class AuthService {
+  /**
+   * Phạm vi kho được nhúng vào JWT: Admin thấy tất cả, các role khác chỉ thấy
+   * kho được gán qua bảng `user_warehouses` hoặc kho mà họ quản lý trực tiếp.
+   */
+  private static async getWarehouseScopes(userId: string, role: Role) {
+    let assignedIds: string[] = [];
+    try {
+      const rows = await prisma.$queryRaw<Array<{ warehouse_id: string }>>(
+        Prisma.sql`SELECT warehouse_id FROM user_warehouses WHERE user_id = ${userId}`
+      );
+      assignedIds = rows.map((row) => row.warehouse_id);
+    } catch {
+      // Bảng chưa được migrate -> vẫn dùng quan hệ nguoiQuanLyId làm fallback.
+      assignedIds = [];
+    }
+
+    const warehouses = await prisma.kho.findMany({
+      where:
+        role === Role.ADMIN
+          ? {}
+          : {
+              OR: [
+                { nguoiQuanLyId: userId },
+                { id: { in: assignedIds } },
+              ],
+            },
+      select: { id: true, maKho: true },
+    });
+
+    return {
+      warehouseIds: warehouses.map((warehouse) => warehouse.id),
+      warehouseCodes: warehouses.map((warehouse) => warehouse.maKho),
+    };
+  }
+
   static async login(username: string, pass: string, ipAddress?: string) {
     const user = await prisma.user.findUnique({
       where: { username },
@@ -24,13 +59,16 @@ export class AuthService {
       throw new Error('Tài khoản hoặc mật khẩu không chính xác');
     }
 
-    // Tạo JWT Token
+    const scopes = await this.getWarehouseScopes(user.id, user.role);
+
+    // Tạo JWT Token (có phạm vi kho)
     const tokenPayload = {
       id: user.id,
       maNV: user.maNV,
       username: user.username,
       hoTen: user.hoTen,
       role: user.role,
+      ...scopes,
     };
 
     const token = jwt.sign(tokenPayload, JWT_SECRET, {
@@ -59,6 +97,7 @@ export class AuthService {
         email: user.email,
         sdt: user.sdt,
         role: user.role,
+        ...scopes,
       },
     };
   }
@@ -146,12 +185,14 @@ export class AuthService {
     });
 
     // Tạo JWT Token tự động để đăng nhập ngay sau đăng ký
+    const scopes = await this.getWarehouseScopes(newUser.id, newUser.role as Role);
     const tokenPayload = {
       id: newUser.id,
       maNV: newUser.maNV,
       username: newUser.username,
       hoTen: newUser.hoTen,
       role: newUser.role,
+      ...scopes,
     };
 
     const token = jwt.sign(tokenPayload, JWT_SECRET, {
@@ -160,7 +201,7 @@ export class AuthService {
 
     return {
       token,
-      user: newUser,
+      user: { ...newUser, ...scopes },
     };
   }
 
@@ -184,7 +225,8 @@ export class AuthService {
       throw new Error('Không tìm thấy thông tin người dùng');
     }
 
-    return user;
+    const scopes = await this.getWarehouseScopes(user.id, user.role);
+    return { ...user, ...scopes };
   }
 
   static async getAllUsers() {

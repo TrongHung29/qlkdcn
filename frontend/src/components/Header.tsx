@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, NotificationItem } from '../types';
+import { User, NotificationItem, Kho } from '../types';
 import { UserCheck, LogOut, Bell, Building2 } from 'lucide-react';
 import { NotificationDropdown } from './NotificationDropdown';
 
@@ -13,6 +13,11 @@ interface HeaderProps {
   readNotificationIds?: string[];
   onMarkAllNotificationsRead?: (silent?: boolean) => void;
   onSelectNotification?: (item: NotificationItem) => void;
+  isFailover?: boolean;
+  onClusterClick?: () => void;
+  warehouses?: Kho[];
+  selectedWarehouseId?: string;
+  onSelectWarehouse?: (id: string) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -25,6 +30,11 @@ export const Header: React.FC<HeaderProps> = ({
   readNotificationIds = [],
   onMarkAllNotificationsRead,
   onSelectNotification,
+  isFailover = false,
+  onClusterClick,
+  warehouses = [],
+  selectedWarehouseId = '',
+  onSelectWarehouse,
 }) => {
   const [showNotifications, setShowNotifications] = useState(false);
   const unreadNotifCount = notifications.filter((n) => !readNotificationIds.includes(n.id)).length;
@@ -47,13 +57,54 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0 sticky top-0 z-20">
-      {/* Kho active info */}
-      <div className="flex items-center gap-2 text-sm text-slate-600">
-        <Building2 className="w-4 h-4 text-red-600" />
-        <span className="font-bold text-slate-800">Kho Tổng Trung Tâm</span>
-        <span className="text-xs px-2.5 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200 font-medium">
-          Hệ thống 1 Kho Tập Trung
-        </span>
+      {/* Kho active info & Cụm DB status */}
+      <div className="flex items-center gap-3 text-sm text-slate-600">
+        <div className="flex items-center gap-2">
+          <Building2 className="w-4 h-4 text-red-600" />
+          {warehouses && warehouses.length > 1 ? (
+            <select
+              value={selectedWarehouseId}
+              onChange={(e) => onSelectWarehouse && onSelectWarehouse(e.target.value)}
+              className="text-xs font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 focus:ring-2 focus:ring-red-500 cursor-pointer"
+              title="Chọn chi nhánh kho làm việc"
+            >
+              <option value="">🏢 Toàn Bộ Hệ Thống Kho</option>
+              {warehouses.map((w) => (
+                <option key={w.id} value={w.id}>
+                  📍 {w.tenKho} ({w.maKho})
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="font-bold text-slate-800">
+              {warehouses?.[0]?.tenKho || 'Kho Tổng Trung Tâm'}
+            </span>
+          )}
+        </div>
+
+        {/* Status Pill cho Cụm DB Phân Tán Dự Phòng */}
+        {onClusterClick && (
+          <button
+            onClick={onClusterClick}
+            className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-semibold transition-all cursor-pointer ${
+              isFailover
+                ? 'bg-amber-50 text-amber-700 border border-amber-300 ring-2 ring-amber-400/20 animate-pulse'
+                : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+            }`}
+            title="Nhấn để xem chi tiết Cụm Database Dự Phòng (HA)"
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isFailover ? 'bg-amber-500' : 'bg-emerald-500'
+              }`}
+            />
+            <span>
+              {isFailover
+                ? '⚠️ Cụm DB: Đang Chạy Dự Phòng (Port 5434)'
+                : '🟢 Cụm DB: Master - Standby (HA Active)'}
+            </span>
+          </button>
+        )}
       </div>
 
       {/* Right controls */}

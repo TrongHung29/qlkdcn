@@ -1,23 +1,29 @@
-version: '3.8'
-
 services:
   # ========================================================
-  # PostgreSQL 16 Database Service
+  # Shard NORTH - kho WH-NORTH-01 (port mặc định 5432)
   # ========================================================
-  postgres:
+  postgres-north:
     image: postgres:16-alpine
-    container_name: wms_postgres
+    container_name: wms_postgres_north
     restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-wms_db}
       TZ: Asia/Ho_Chi_Minh
+    # Bật WAL ở mức replica để phát luồng sao chép sang Standby (5434)
+    command: >
+      postgres
+      -c wal_level=replica
+      -c max_wal_senders=10
+      -c max_replication_slots=10
+      -c wal_keep_size=1GB
+      -c hot_standby=on
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_NORTH_PORT:-5432}:5432"
     volumes:
-      # Bắt buộc mount volume để dữ liệu không bị mất khi xóa/tái tạo container
-      - ./pgdata:/var/lib/postgresql/data
+      - ./pgdata-north:/var/lib/postgresql/data
+      - ./docker/postgres/init-replication.sh:/docker-entrypoint-initdb.d/01-replication.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-wms_db}"]
       interval: 10s
@@ -27,20 +33,159 @@ services:
       - wms-network
 
   # ========================================================
-  # (Tùy chọn) pgAdmin 4 - Giao diện Web trực quan quản lý DB
-  # Truy cập: http://localhost:5050 (Email: admin@wms.com / Pass: admin)
+  # Shard SOUTH - kho WH-SOUTH-01 (port mặc định 5433)
+  # ========================================================
+  postgres-south:
+    image: postgres:16-alpine
+    container_name: wms_postgres_south
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-wms_db}
+      TZ: Asia/Ho_Chi_Minh
+    ports:
+      - "${POSTGRES_SOUTH_PORT:-5433}:5432"
+    volumes:
+      - ./pgdata-south:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-wms_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wms-network
+
+  # ========================================================
+  # Khởi tạo Hot Standby: pg_basebackup từ Primary (chạy 1 lần)
+  # -R tự động ghi standby.signal + primary_conninfo vào pgdata-replica
+  # ========================================================
+  replica-init:
+    image: postgres:16-alpine
+    container_name: wms_replica_init
+    restart: "no"
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - ./pgdata-replica:/replica-data
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ -f /replica-data/PG_VERSION ]; then
+          echo "Standby da duoc khoi tao, bo qua pg_basebackup."
+          exit 0
+        fi
+        echo "Dang tao Hot Standby tu Primary postgres-north:5432 ..."
+        pg_basebackup \
+          -d "host=postgres-north port=5432 dbname=${POSTGRES_DB:-wms_db} user=${POSTGRES_USER:-postgres} password=${POSTGRES_PASSWORD:-postgres}" \
+          -D /replica-data -Fp -Xs -R -P
+        chown -R postgres:postgres /replica-data
+        chmod 700 /replica-data
+        echo "Hoan tat. /replica-data/standby.signal da duoc tao (Hot Standby)."
+    depends_on:
+      postgres-north:
+        condition: service_healthy
+    networks:
+      - wms-network
+
+  # ========================================================
+  # Database Dự Phòng (Hot Standby / Read-Replica Node)
+  # Cổng 5434: nhận WAL streaming từ Primary 5432, chỉ đọc (hot_standby)
+  # ========================================================
+  postgres-replica:
+    image: postgres:16-alpine
+    container_name: wms_postgres_replica
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-wms_db}
+      TZ: Asia/Ho_Chi_Minh
+    command:
+      - postgres
+      - -c
+      - hot_standby=on
+    ports:
+      - "${POSTGRES_REPLICA_PORT:-5434}:5432"
+    volumes:
+      - ./pgdata-replica:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-wms_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      replica-init:
+        condition: service_completed_successfully
+    networks:
+      - wms-network
+
+  # ========================================================
+  # RabbitMQ - Saga events (topic exchange + DLX/DLQ)
+  # AMQP: localhost:5672 | Management: http://localhost:15672
+  # ========================================================
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: wms_rabbitmq
+    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+      TZ: Asia/Ho_Chi_Minh
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - ./rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - wms-network
+
+  # ========================================================
+  # Redis - dùng cho cache/idempotency tùy chọn (DB là nguồn chân lý)
+  # ========================================================
+  redis:
+    image: redis:7-alpine
+    container_name: wms_redis
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - ./redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wms-network
+
+  # ========================================================
+  # (Tùy chọn) pgAdmin 4 - http://localhost:5050
+  # Email: admin@admin.com (hoặc admin@wms.com) | Password: admin123
+  # Tự động nạp cấu hình 3 CSDL phân tán: North, South, Replica
   # ========================================================
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: wms_pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@wms.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    volumes:
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
     ports:
       - "5050:80"
     depends_on:
-      postgres:
+      postgres-north:
+        condition: service_healthy
+      postgres-south:
         condition: service_healthy
     networks:
       - wms-network
@@ -48,4 +193,3 @@ services:
 networks:
   wms-network:
     driver: bridge
-

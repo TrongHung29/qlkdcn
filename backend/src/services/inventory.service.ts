@@ -218,11 +218,18 @@ export class InventoryService {
 
       let updatedStock;
       if (currentStock) {
+        // Đảm bảo Invariant: Tồn thực tế mới không được nhỏ hơn lượng hàng đang bị tạm giữ bởi các phiếu xuất/chuyển chờ duyệt
+        if (data.soLuongMoi < currentStock.soLuongTamGiu) {
+          throw new Error(
+            `Không thể điều chỉnh tồn kho xuống ${data.soLuongMoi} vì đang có ${currentStock.soLuongTamGiu} sản phẩm bị tạm giữ bởi các phiếu chờ duyệt! Vui lòng từ chối hoặc xử lý các phiếu chờ duyệt trước khi giảm tồn.`
+          );
+        }
+
         updatedStock = await tx.tonKho.update({
           where: { id: currentStock.id },
           data: {
             soLuongTon: data.soLuongMoi,
-            soLuongKhaDung: Math.max(0, data.soLuongMoi - currentStock.soLuongTamGiu),
+            soLuongKhaDung: data.soLuongMoi - currentStock.soLuongTamGiu,
           },
         });
       } else {
@@ -248,9 +255,16 @@ export class InventoryService {
           },
         });
         for (const other of otherStocks) {
+          // Không được đưa ô khác về 0 khi vẫn có hàng đang giữ chỗ, nếu không
+          // soLuongKhaDung = soLuongTon - soLuongTamGiu sẽ bị âm.
+          if (other.soLuongTamGiu > 0) {
+            throw new Error(
+              `Không thể gom tồn về ô này vì ô ${other.viTriId} đang giữ ${other.soLuongTamGiu} sản phẩm cho phiếu chờ duyệt`
+            );
+          }
           await tx.tonKho.update({
             where: { id: other.id },
-            data: { soLuongTon: 0, soLuongKhaDung: 0 },
+            data: { soLuongTon: 0, soLuongKhaDung: 0, soLuongTamGiu: 0 },
           });
           const otherTotal = await tx.tonKho.aggregate({
             where: { viTriId: other.viTriId },

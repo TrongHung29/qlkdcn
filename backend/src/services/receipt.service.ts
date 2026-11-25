@@ -194,6 +194,12 @@ export class ReceiptService {
 
       // b. Duyệt qua từng chi tiết hàng và cộng vào TonKho
       for (const item of receipt.chiTiet) {
+        // Khóa hàng ô lưu trữ để chống Race Condition khi có nhiều phiếu nhập cùng được duyệt đồng thời
+        await tx.$executeRawUnsafe(
+          'SELECT id FROM vi_tri_luu_tru WHERE id = $1 FOR UPDATE',
+          item.viTriId
+        );
+
         // Kiểm tra sức chứa của ô trước khi nhập
         const viTri = await tx.viTriLuuTru.findUnique({ where: { id: item.viTriId } });
         if (!viTri) throw new Error(`Không tìm thấy vị trí ô lưu trữ`);

@@ -36,5 +36,13 @@ router.post(
   DispatchController.reject
 );
 
+// Quét và giải phóng các phiếu giữ chỗ quá hạn TTL
+router.post(
+  '/sweep-expired',
+  authenticate,
+  authorize([Role.ADMIN, Role.QUAN_LY_KHO]),
+  DispatchController.sweepExpired
+);
+
 export default router;
 

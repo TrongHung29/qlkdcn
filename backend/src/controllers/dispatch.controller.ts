@@ -79,5 +79,15 @@ export class DispatchController {
       return sendError(res, error.message, 400);
     }
   }
+
+  static async sweepExpired(req: Request, res: Response) {
+    try {
+      const minutes = req.body.maxAgeMinutes ? Number(req.body.maxAgeMinutes) : 60;
+      const result = await DispatchService.autoReleaseExpiredDispatches(minutes);
+      return sendSuccess(res, result, `Đã quét và giải phóng ${result.count} phiếu xuất quá hạn giữ chỗ`);
+    } catch (error: any) {
+      return sendError(res, error.message, 400);
+    }
+  }
 }
 
